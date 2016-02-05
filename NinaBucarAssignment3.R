@@ -2,7 +2,7 @@
 print('Nina Bucar')
 print('1188635')
 print('nbucar@ucsc.edu')
-
+ 
 #1 Load
 library(foreign)
 df.ex <- read.dta(file ="https://github.com/EconomiCurtis/econ294_2015/raw/master/data/org_example.dta")
