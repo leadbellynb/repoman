@@ -68,8 +68,9 @@ df.ex.6 <- df.ex %>%
   ) 
 
 df.ex.6 %>% nrow %>% print
-highest.mean.rw <- arrange(df.ex.6, -rw.mean)
-highest.mean.rw[1,]$rw.mean %>% print
+df.ex.6b <- df.ex.6 %>% ungroup
+highest.mean.rw <- arrange(df.ex.6b, -rw.mean)
+select(highest.mean.rw[1,], month, state, year) %>% print
 
 #7
 df.ex.7a <- arrange(df.ex, year, month, desc(as.character(df.ex$state)))
