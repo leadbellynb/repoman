@@ -1,0 +1,244 @@
+---
+title: "R-lab Final"
+author: "Nina Bucar"
+date: "March 16, 2016"
+output: html_document
+---
+
+## __Data Analysis For Departure Delays Using nycflights13 Data__
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+library(nycflights13)
+library("dplyr")
+library("RSQLite")
+library(ggplot2)
+
+nycf <- nycflights13_sqlite()
+```
+
+### __1) Weather__
+
+The weather table in the nycflights13 database has several columns of data that seem to have the potential for influencing flight delays.  I chose to examine and analyze the wind speed and wind gusts data.  The approach I took is to do a left-join of the flights data with the weather data.
+
+I visually inspected the weather data and determined that almost all of the weather data is from the EWR (Newark, New Jersey) airport.  Since there is not enough data for the JFK and LGA airports in the weather table to do a reasonable analysis, I used the dplyr and sql functions to filter out everything except the weather data for EWR.  I did the same thing when querying the flights table.
+
+I also noticed that the weather table has data only at the level of hours and nothing more granular.  So, I created a new variable, "hour", for each flight in the flights table.  Then I did the left-join using year, month, day, hour to extend the flight row (observations) with the weather columns.
+
+There are a limited number of wind speeds in the weather table, so I was able to use the group_by and summarize functions to calculate the mean value of departure delays for the various wind speeds in the weather table.
+
+The plot below shows how the mean of the departure delays varies with wind speed.  Generally, the mean departure delay for flights increases with increased wind speed for the departure hour for those flights -- except for wind speeds above about 35 mph (which had limited data points).  As the plot shows, the mean of departure delays increases significantly when the wind speed increases by 10 or 20 mph at departure time.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+weather.tbl <- tbl(nycf, "weather") %>%
+  filter(origin == "EWR") %>%
+  collect %>%
+  mutate(
+    wind_speed.r = round(wind_speed),
+    wind_gust.r = round(wind_gust))
+
+flights.tbl <- tbl(nycf, "flights") %>%
+  filter(origin == "EWR", !is.na(dep_delay) & dep_delay > 0) %>%
+  collect %>%
+  mutate(
+    hour = round(dep_time / 100),
+    canceled = is.na(arr_time)) %>%
+  select(year, month, day, hour, dep_delay, canceled)
+
+flights.weather <- flights.tbl %>%
+  left_join(weather.tbl)
+
+flights.windspeed <- flights.weather %>%
+  filter(!is.na(wind_speed.r) & wind_speed.r <= 50) %>%
+  group_by(wind_speed.r) %>%
+  summarize(
+    dep_delay.mean = mean(dep_delay, na.rm = TRUE),
+    dep_delay.max = max(dep_delay, na.rm = TRUE),
+    total = n(),
+    canceled.sum = sum(canceled, na.rm = TRUE),
+    cancelled.pct = (canceled.sum / total) * 100)
+
+ggplot(flights.windspeed, aes(wind_speed.r, dep_delay.mean)) + geom_point() + geom_smooth()
+
+```
+
+I also ran a regression of wind_speed on departure delay mean, which resulted in a statistically significant coefficient, as shown in the output, below.
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+windspeed.lm <- lm(dep_delay.mean ~ wind_speed.r, data = flights.windspeed)
+print(summary(windspeed.lm))
+
+```
+
+
+I did a similar analysis for the wind gust data and got similar results: mean departure delays increase with increasing wind gusts.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+flights.windgust <- flights.weather %>%
+  filter(!is.na(wind_gust.r) & wind_gust.r <= 50) %>%
+  group_by(wind_gust.r) %>%
+  summarize(
+    dep_delay.mean = mean(dep_delay, na.rm = TRUE),
+    dep_delay.max = max(dep_delay, na.rm = TRUE),
+    total = n(),
+    canceled.sum = sum(canceled, na.rm = TRUE),
+    cancelled.pct = (canceled.sum / total) * 100)
+
+ggplot(flights.windgust, aes(wind_gust.r, dep_delay.mean)) + geom_point() + geom_smooth()
+
+```
+Regression of mean departure delays on wind gusts showing statistically significant coefficients.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+windgust.lm <- lm(dep_delay.mean ~ wind_gust.r, data = flights.windgust)
+print(summary(windgust.lm))
+
+```
+
+### __2) Time__
+
+To analyze the relationship between departure delays and time, I rounded the departure time to the nearest hour. Then, I used group_by, summarize, filter, arrange, etc. on the data in the flights table to calculate mean delays and cancellation percentages to show how departure delays vary with time.
+
+The output, below, shows which departure hours result in the longest mean departure delays.  The largest departure delay means are for the late night and after midnight hours, as would probably be expected.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+delay.dep_time.tbl <- tbl(nycf, "flights") %>% 
+  select(dep_time, dep_delay, arr_time) %>% 
+  collect %>%
+  mutate(
+    canceled = is.na(arr_time), 
+    dep_delayed = dep_delay > 0,
+    dep_time.r = round(dep_time / 100)) %>%
+  group_by(dep_time.r) %>%
+  summarize(
+    total = n(),
+    dep_delayed.sum = sum(dep_delayed, na.rm = TRUE),
+    dep_delayed.pct = (dep_delayed.sum / total) * 100,
+    dep_delay.mean = mean(dep_delay, na.rm = TRUE),
+    dep_delay.max = max(dep_delay, na.rm = TRUE),
+    canceled.sum = sum(canceled, na.rm = TRUE),
+    cancelled.pct = (canceled.sum / total) * 100) %>%
+  filter(!is.na(dep_delay.mean) & dep_delay.mean > 0)
+
+delay.dep_time.tbl %>% select(dep_time.r, dep_delay.mean) %>% arrange(-dep_delay.mean) %>% print
+
+```
+The output, below, shows how the mean departure delay corresponds to the month of departure.  The data indicates the the largest depart delay means occur during the beginning-of-summer months and in December, presumably due to travel for the holidays.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+delay.month.tbl <- tbl(nycf, "flights") %>% 
+  select(month, dep_delay, arr_time) %>% 
+  collect %>%
+  mutate(canceled = is.na(arr_time), dep_delayed = dep_delay > 0) %>%
+  group_by(month) %>%
+  summarize(
+    total = n(),
+    dep_delayed.sum = sum(dep_delayed, na.rm = TRUE),
+    dep_delayed.pct = (dep_delayed.sum / total) * 100,
+    dep_delay.mean = mean(dep_delay, na.rm = TRUE),
+    dep_delay.max = max(dep_delay, na.rm = TRUE),
+    canceled.sum = sum(canceled, na.rm = TRUE),
+    cancelled.pct = (canceled.sum / total) * 100) %>%
+  filter(!is.na(dep_delay.mean))
+
+delay.month.tbl %>% select(month, dep_delay.mean) %>% arrange(-dep_delay.mean) %>% print
+
+```
+
+
+### __3) Airport Destination__
+
+To analyze the relationship between departure delays and airport destinations, I used group_by, summarize, filter, arrange, etc. on the data in the flights table to calculate mean delays and cancellation percentages to show how departure delays vary with flight destinations.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+delay.dest.tbl <- tbl(nycf, "flights") %>% 
+  select(dest, dep_delay, arr_time) %>% 
+  collect %>%
+  mutate(canceled = is.na(arr_time), dep_delayed = dep_delay > 0) %>%
+  group_by(dest) %>%
+  summarize(
+    total = n(),
+    dep_delayed.sum = sum(dep_delayed, na.rm = TRUE),
+    dep_delayed.pct = (dep_delayed.sum / total) * 100,
+    dep_delay.mean = mean(dep_delay, na.rm = TRUE),
+    dep_delay.max = max(dep_delay, na.rm = TRUE),
+    canceled.sum = sum(canceled, na.rm = TRUE),
+    cancelled.pct = (canceled.sum / total) * 100) %>%
+  filter(!is.na(dep_delay.mean) & dep_delay.mean > 0)
+
+delay.dest.tbl %>% select(dest, dep_delay.mean) %>% arrange(-dep_delay.mean) %>% print
+
+```
+
+This output shows the destination airports with the worst departure delays.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+delay.dest.tbl %>% select(dest, dep_delay.max) %>% arrange(-dep_delay.max) %>% print
+
+```
+
+This output shows the destinations airports with the worst cancellation percentages.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+delay.dest.tbl %>% select(dest, cancelled.pct) %>% arrange(-cancelled.pct) %>% print
+
+```
+
+### __4) Characteristics of the Plane__
+
+To analyze the relationship between departure delays and planes, I used group_by, summarize, filter, arrange, etc. on the data in the flights table to calulate mean delays and cancelation percentages and then did a left_join with the planes table to show how departure delays vary with planes. With further analysis, it would be possible to see how the departure delays relate to specific characteristics of each plane type.
+
+The output, below, shows which planes result in the longest mean departure delays.  
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+delay.tailnum.tbl <- tbl(nycf, "flights") %>% 
+  select(tailnum, dep_delay, arr_time) %>% 
+  collect %>%
+  mutate(canceled = is.na(arr_time), dep_delayed = dep_delay > 0) %>%
+  group_by(tailnum) %>%
+  summarize(
+    total = n(),
+    dep_delayed.sum = sum(dep_delayed, na.rm = TRUE),
+    dep_delayed.pct = (dep_delayed.sum / total) * 100,
+    dep_delay.mean = mean(dep_delay, na.rm = TRUE),
+    dep_delay.max = max(dep_delay, na.rm = TRUE),
+    canceled.sum = sum(canceled, na.rm = TRUE),
+    cancelled.pct = (canceled.sum / total) * 100) %>%
+  filter(!is.na(dep_delay.mean))
+
+delay.tailnum.tbl %>%
+  left_join(planes, by = c("tailnum")) %>%
+  select(dep_delay.mean, tailnum, manufacturer:seats) %>%
+  arrange(-dep_delay.mean) %>% print
+
+```
+
+The output, below, shows the significant mean departure delays for planes manufactured by BOEING.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+delay.tailnum.tbl %>%
+  left_join(planes, by = c("tailnum")) %>%
+  select(dep_delay.mean, tailnum, manufacturer:seats) %>%
+  filter(manufacturer == "BOEING") %>%
+  arrange(-dep_delay.mean) %>% print
+
+```
+
+My analysis of this data shows that you can see significant delays from the NYC airports in 2013 due to weather conditions such as wind speeds and wind gusts, departure times, with late night hours being particularly bad, departure times of year, with summer months and December being particularly bad, destination airports, such as CAE, TUL, OKC and others listed in my output, and particular planes.
+
+The data in nycflights13 is interesting and allows for interesting analysis using RSQLite, dplyr, ggplot and other R language libraries and functions.
+
+
